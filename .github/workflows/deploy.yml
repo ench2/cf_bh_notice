@@ -40,9 +40,12 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Write Worker secrets
-        run: printf 'ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD" > .worker-secrets
+        run: |
+          printf 'ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD" > .worker-secrets
+          printf 'RESEND_API_KEY=%s\n' "$RESEND_API_KEY" >> .worker-secrets
         env:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
 
       - name: Deploy Worker
         run: npx wrangler deploy --secrets-file .worker-secrets

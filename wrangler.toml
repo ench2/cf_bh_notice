@@ -10,9 +10,6 @@ binding = "DB"
 database_name = "notice_reminders"
 database_id = "eaf5496e-2ab3-486d-82b0-204c301546e5"
 
-[[send_email]]
-name = "EMAIL"
-
 [vars]
 REMINDER_EMAIL = "4100798@qq.com"
-FROM_EMAIL = "wxq@edu.841666.xyz"
+FROM_EMAIL = "Notice Reminder <onboarding@resend.dev>"

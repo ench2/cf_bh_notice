@@ -5,6 +5,7 @@ import {
   deleteReminder,
   listReminders,
   processDueReminders,
+  sendTestEmail,
   validateReminderInput,
   ValidationError
 } from "./reminders";
@@ -87,12 +88,7 @@ async function route(request: Request, env: Env): Promise<Response> {
 
   if (pathname === "/api/test-email" && request.method === "POST") {
     try {
-      await env.EMAIL.send({
-        to: env.REMINDER_EMAIL,
-        from: env.FROM_EMAIL,
-        subject: "Notice reminder test email",
-        text: `This is a test email from notice-reminder-worker at ${new Date().toISOString()}.`
-      });
+      await sendTestEmail(env);
       return json({ ok: true });
     } catch (error) {
       console.error(error);

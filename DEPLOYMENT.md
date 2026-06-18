@@ -1,6 +1,6 @@
 # GitHub 自动部署到 Cloudflare 说明
 
-这个项目是 Cloudflare Workers 应用，使用 D1 数据库、Cron Trigger 和 Send Email 绑定。推荐使用本仓库自带的 GitHub Actions：代码推送到 GitHub 的 `main` 分支后，自动完成类型检查、测试、D1 远程迁移和 Worker 部署。
+这个项目是 Cloudflare Workers 应用，使用 D1 数据库、Cron Trigger 和 Resend 邮件 API。推荐使用本仓库自带的 GitHub Actions：代码推送到 GitHub 的 `main` 分支后，自动完成类型检查、测试、D1 远程迁移和 Worker 部署。
 
 ## 一、部署前准备
 
@@ -8,8 +8,8 @@
 
 - 一个 Cloudflare 账号。
 - 一个 GitHub 仓库。
+- 一个 Resend 账号。
 - 本机已安装 Node.js 20 或更高版本。
-- Cloudflare 账号已启用 Workers、D1、Email Routing/Email Service 相关能力。
 
 先在本机安装依赖：
 
@@ -40,29 +40,29 @@ database_name = "notice_reminders"
 database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ```
 
-把真实的 `database_id` 填入 `wrangler.toml`，替换当前的 `REPLACE_WITH_D1_DATABASE_ID`。
+把真实的 `database_id` 填入 `wrangler.toml`。
 
-## 三、配置发件邮箱
+## 三、配置 Resend 邮件
 
-项目使用 `wrangler.toml` 里的 Send Email 绑定：
+进入 Resend 控制台，创建 API Key。
 
-```toml
-[[send_email]]
-name = "EMAIL"
-```
-
-同时需要确认 `wrangler.toml` 中这两个变量是你的真实邮箱：
+如果只是先测试，可以使用 Resend 默认发件地址：
 
 ```toml
 [vars]
-REMINDER_EMAIL = "admin@example.com"
-FROM_EMAIL = "reminders@example.com"
+REMINDER_EMAIL = "4100798@qq.com"
+FROM_EMAIL = "Notice Reminder <onboarding@resend.dev>"
 ```
 
-- `REMINDER_EMAIL`：接收提醒邮件的邮箱。
-- `FROM_EMAIL`：Cloudflare 允许发送的发件邮箱，通常必须属于已验证域名或已配置的 Email Routing 地址。
+如果要使用自己的域名邮箱，例如 `wxq@edu.841666.xyz`，需要先在 Resend 里添加并验证域名，然后配置：
 
-如果没有配置好 Cloudflare 邮件发送能力，Worker 可以部署，但实际提醒邮件可能发送失败。
+```toml
+[vars]
+REMINDER_EMAIL = "4100798@qq.com"
+FROM_EMAIL = "Notice Reminder <wxq@edu.841666.xyz>"
+```
+
+`REMINDER_EMAIL` 是接收提醒的邮箱。`FROM_EMAIL` 是发件人，必须符合 Resend 的发件域名规则。
 
 ## 四、创建 Cloudflare API Token
 
@@ -82,13 +82,14 @@ FROM_EMAIL = "reminders@example.com"
 
 进入 GitHub 仓库：`Settings` -> `Secrets and variables` -> `Actions` -> `New repository secret`。
 
-添加三个 Secret：
+添加四个 Secret：
 
 | 名称 | 内容 |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | 第四步创建的 Cloudflare API Token |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API Token |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Account ID |
 | `ADMIN_PASSWORD` | 登录提醒管理页面的管理员密码 |
+| `RESEND_API_KEY` | Resend API Key |
 
 不要把 `.dev.vars` 上传到 GitHub。当前 `.gitignore` 已经排除了 `.dev.vars`。
 
@@ -109,7 +110,7 @@ git push -u origin main
 
 ```bash
 git add .
-git commit -m "Add Cloudflare auto deployment"
+git commit -m "Use Resend email API"
 git push
 ```
 
@@ -129,33 +130,45 @@ git push
 4. 执行 `npm run typecheck`。
 5. 执行 `npm test`。
 6. 执行远程 D1 迁移：`npx wrangler d1 migrations apply notice_reminders --remote`。
-7. 从 GitHub Secret 写入 Worker secret：`ADMIN_PASSWORD`。
+7. 从 GitHub Secret 写入 Worker secrets：`ADMIN_PASSWORD`、`RESEND_API_KEY`。
 8. 执行部署：`npx wrangler deploy --secrets-file .worker-secrets`。
 
 也可以在 GitHub 页面手动触发：`Actions` -> `Deploy Cloudflare Worker` -> `Run workflow`。
 
 ## 八、首次部署后检查
 
-部署完成后，在 GitHub Actions 日志里会看到 Worker 地址，通常类似：
+部署完成后，打开你的域名：
+
+```text
+https://reminder.841666.xyz/
+```
+
+或 Workers 默认域名：
 
 ```text
 https://notice-reminder-worker.<你的 workers 子域>.workers.dev
 ```
 
-打开地址后，用 `ADMIN_PASSWORD` 登录。
+登录后可以调用测试接口验证 Resend 发信：
+
+```bash
+curl -X POST https://reminder.841666.xyz/api/test-email
+```
+
+这个接口需要登录 cookie。更简单的方式是在浏览器登录后，用开发者工具或后续页面按钮调用；当前它主要用于部署排错。
 
 也可以在 Cloudflare 控制台检查：
 
 - `Workers & Pages` 中存在 `notice-reminder-worker`。
 - Worker 设置里存在 D1 绑定 `DB`。
-- Worker 设置里存在 Send Email 绑定 `EMAIL`。
+- Worker 设置里存在 secret：`ADMIN_PASSWORD`、`RESEND_API_KEY`。
 - Triggers 中存在 Cron：`* * * * *`。
 
 ## 九、常见问题
 
 ### 1. GitHub Actions 报 `database_id` 无效
 
-说明 `wrangler.toml` 里还没有填真实 D1 数据库 ID。重新执行：
+说明 `wrangler.toml` 里没有填真实 D1 数据库 ID。重新执行：
 
 ```bash
 npx wrangler d1 create notice_reminders
@@ -169,16 +182,17 @@ npx wrangler d1 create notice_reminders
 
 ### 3. 页面提示缺少 `ADMIN_PASSWORD`
 
-检查 GitHub 仓库 Secrets 是否添加了 `ADMIN_PASSWORD`。然后重新运行 GitHub Actions。
+检查 GitHub 仓库 Secrets 是否添加了 `ADMIN_PASSWORD`，然后重新运行 GitHub Actions。
 
-### 4. 可以登录但收不到邮件
+### 4. 发送邮件失败
 
 优先检查：
 
-- `FROM_EMAIL` 是否是 Cloudflare 允许发送的地址。
+- GitHub Secrets 或 Worker secrets 是否有 `RESEND_API_KEY`。
+- `FROM_EMAIL` 是否符合 Resend 规则。
+- 如果使用自定义域名发件，域名是否已在 Resend 验证通过。
 - `REMINDER_EMAIL` 是否正确。
-- Cloudflare 邮件发送能力是否已配置完成。
-- Worker 日志里是否有 Email binding 的错误。
+- Worker 日志里是否有 `Resend email failed`。
 
 ### 5. 想改 Worker 名称
 
@@ -199,11 +213,6 @@ npm run typecheck
 npm test
 npx wrangler d1 migrations apply notice_reminders --remote
 npx wrangler secret put ADMIN_PASSWORD
-npm run deploy
-```
-
-之后每次改代码，只要执行：
-
-```bash
+npx wrangler secret put RESEND_API_KEY
 npm run deploy
 ```

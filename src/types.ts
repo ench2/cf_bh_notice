@@ -29,20 +29,10 @@ export type ReminderInput = {
   firstRunAt: string;
 };
 
-export type EmailBinding = {
-  send(message: {
-    to: string | { email: string; name?: string };
-    from: string | { email: string; name?: string };
-    subject: string;
-    text?: string;
-    html?: string;
-  }): Promise<unknown>;
-};
-
 export type Env = {
   DB: D1Database;
-  EMAIL: EmailBinding;
   ADMIN_PASSWORD: string;
+  RESEND_API_KEY: string;
   REMINDER_EMAIL: string;
   FROM_EMAIL: string;
 };

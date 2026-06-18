@@ -1,18 +1,22 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { completeReminder, processDueReminders, validateReminderInput } from "../src/reminders";
 import type { Env, ReminderRow } from "../src/types";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("validateReminderInput", () => {
   it("accepts valid finite reminders", () => {
     expect(validateReminderInput({
-      title: "喝水",
+      title: "Drink water",
       intervalValue: 1,
       intervalUnit: "minute",
       repeatMode: "finite",
       repeatCount: 2,
       firstRunAt: "2026-06-18T10:00:00.000Z"
     })).toMatchObject({
-      title: "喝水",
+      title: "Drink water",
       intervalValue: 1,
       intervalUnit: "minute",
       repeatMode: "finite",
@@ -22,12 +26,12 @@ describe("validateReminderInput", () => {
 
   it("rejects second units", () => {
     expect(() => validateReminderInput({
-      title: "喝水",
+      title: "Drink water",
       intervalValue: 1,
       intervalUnit: "second",
       repeatMode: "forever",
       firstRunAt: "2026-06-18T10:00:00.000Z"
-    })).toThrow("提醒单位无效");
+    })).toThrow("Invalid reminder unit");
   });
 });
 
@@ -60,11 +64,18 @@ describe("reminder behavior", () => {
     const outsideLookahead = row({ id: "r3", next_run_at: "2026-06-21T00:06:00.000Z", last_sent_at: null });
     const db = createDb([inWindow, throttled, outsideLookahead]);
     const env = createEnv(db);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
 
     const count = await processDueReminders(env, new Date("2026-06-18T00:05:00.000Z"));
 
     expect(count).toBe(1);
-    expect(env.EMAIL.send).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith("https://api.resend.com/emails", expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({
+        Authorization: "Bearer test-resend-key"
+      })
+    }));
     expect(db.rows[0].last_sent_for).toBe("2026-06-20T00:05:00.000Z");
     expect(db.rows[0].last_sent_at).toBe("2026-06-18T00:05:00.000Z");
   });
@@ -72,18 +83,19 @@ describe("reminder behavior", () => {
   it("does not send reminder emails before 08:00 Asia/Shanghai", async () => {
     const db = createDb([row({ next_run_at: "2026-06-18T10:00:00.000Z", last_sent_at: null })]);
     const env = createEnv(db);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 200 }));
 
     const count = await processDueReminders(env, new Date("2026-06-17T23:59:00.000Z"));
 
     expect(count).toBe(0);
-    expect(env.EMAIL.send).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
 function row(overrides: Partial<ReminderRow> = {}): ReminderRow {
   return {
     id: "r1",
-    title: "测试提醒",
+    title: "Test reminder",
     description: "",
     interval_value: 1,
     interval_unit: "minute",
@@ -103,8 +115,8 @@ function row(overrides: Partial<ReminderRow> = {}): ReminderRow {
 function createEnv(db: ReturnType<typeof createDb>): Env {
   return {
     DB: db as unknown as D1Database,
-    EMAIL: { send: vi.fn(async () => undefined) },
     ADMIN_PASSWORD: "secret",
+    RESEND_API_KEY: "test-resend-key",
     REMINDER_EMAIL: "admin@example.com",
     FROM_EMAIL: "reminders@example.com"
   };

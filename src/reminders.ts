@@ -11,7 +11,7 @@ const SEND_WINDOW_END_MINUTE = 22 * 60;
 
 export function validateReminderInput(input: unknown): ReminderInput {
   if (!input || typeof input !== "object") {
-    throw new ValidationError("请求体必须是 JSON 对象");
+    throw new ValidationError("Request body must be a JSON object");
   }
 
   const value = input as Record<string, unknown>;
@@ -25,22 +25,22 @@ export function validateReminderInput(input: unknown): ReminderInput {
     : Number(value.repeatCount);
   const firstRunAt = stringValue(value.firstRunAt);
 
-  if (!title) throw new ValidationError("标题不能为空");
+  if (!title) throw new ValidationError("Title is required");
   if (!Number.isInteger(intervalValue) || intervalValue <= 0) {
-    throw new ValidationError("间隔数值必须是正整数");
+    throw new ValidationError("Interval value must be a positive integer");
   }
   if (typeof intervalUnit !== "string" || !INTERVAL_UNITS.has(intervalUnit as IntervalUnit)) {
-    throw new ValidationError("提醒单位无效");
+    throw new ValidationError("Invalid reminder unit");
   }
   if (typeof repeatMode !== "string" || !REPEAT_MODES.has(repeatMode as RepeatMode)) {
-    throw new ValidationError("重复模式无效");
+    throw new ValidationError("Invalid repeat mode");
   }
   if (repeatMode === "finite" && (typeof repeatCount !== "number" || !Number.isInteger(repeatCount) || repeatCount <= 0)) {
-    throw new ValidationError("固定重复次数必须是正整数");
+    throw new ValidationError("Repeat count must be a positive integer");
   }
   const finiteRepeatCount = repeatMode === "finite" ? repeatCount as number : undefined;
   if (Number.isNaN(new Date(firstRunAt).getTime())) {
-    throw new ValidationError("首次提醒时间无效");
+    throw new ValidationError("Invalid first run time");
   }
 
   return {
@@ -195,6 +195,15 @@ export async function processDueReminders(env: Env, now = new Date()): Promise<n
   return sentCount;
 }
 
+export async function sendTestEmail(env: Env): Promise<void> {
+  const sentAt = new Date().toISOString();
+  await sendEmail(env, {
+    subject: "Notice reminder test email",
+    text: `This is a test email from notice-reminder-worker at ${sentAt}.`,
+    html: `<p>This is a test email from notice-reminder-worker at ${escapeHtml(sentAt)}.</p>`
+  });
+}
+
 function isWithinSendWindow(value: Date): boolean {
   const localMinute = getLocalMinuteOfDay(value, SEND_TIME_ZONE);
   return localMinute >= SEND_WINDOW_START_MINUTE && localMinute <= SEND_WINDOW_END_MINUTE;
@@ -217,34 +226,56 @@ async function getReminder(env: Env, id: string): Promise<ReminderRow | null> {
 }
 
 async function sendReminderEmail(env: Env, reminder: ReminderRow): Promise<void> {
-  const subject = `提醒：${reminder.title}`;
+  const subject = `Reminder: ${reminder.title}`;
+  const nextRunAt = formatIsoForEmail(reminder.next_run_at);
+  const repeatRemaining = reminder.repeat_mode === "forever" ? "Forever" : String(reminder.repeat_remaining);
   const text = [
-    `提醒：${reminder.title}`,
+    `Reminder: ${reminder.title}`,
     "",
-    reminder.description ? `备注：${reminder.description}` : "",
-    `本次到期时间：${formatIsoForEmail(reminder.next_run_at)}`,
-    `重复周期：每 ${reminder.interval_value} ${unitLabel(reminder.interval_unit)}`,
-    `剩余次数：${reminder.repeat_mode === "forever" ? "永久重复" : reminder.repeat_remaining}`,
+    reminder.description ? `Note: ${reminder.description}` : "",
+    `Due at: ${nextRunAt}`,
+    `Interval: every ${reminder.interval_value} ${unitLabel(reminder.interval_unit)}`,
+    `Remaining repeats: ${repeatRemaining}`,
     "",
-    "请登录管理页面并点击“本次完成”来推进下一次提醒。"
+    "Open the reminder page and mark this item complete to schedule the next run."
   ].filter(Boolean).join("\n");
 
   const html = `
     <h1>${escapeHtml(reminder.title)}</h1>
     ${reminder.description ? `<p>${escapeHtml(reminder.description)}</p>` : ""}
-    <p><strong>本次到期时间：</strong>${escapeHtml(formatIsoForEmail(reminder.next_run_at))}</p>
-    <p><strong>重复周期：</strong>每 ${reminder.interval_value} ${escapeHtml(unitLabel(reminder.interval_unit))}</p>
-    <p><strong>剩余次数：</strong>${reminder.repeat_mode === "forever" ? "永久重复" : reminder.repeat_remaining}</p>
-    <p>请登录管理页面并点击“本次完成”来推进下一次提醒。</p>
+    <p><strong>Due at:</strong> ${escapeHtml(nextRunAt)}</p>
+    <p><strong>Interval:</strong> every ${reminder.interval_value} ${escapeHtml(unitLabel(reminder.interval_unit))}</p>
+    <p><strong>Remaining repeats:</strong> ${escapeHtml(repeatRemaining)}</p>
+    <p>Open the reminder page and mark this item complete to schedule the next run.</p>
   `;
 
-  await env.EMAIL.send({
-    to: env.REMINDER_EMAIL,
-    from: env.FROM_EMAIL,
-    subject,
-    text,
-    html
+  await sendEmail(env, { subject, text, html });
+}
+
+async function sendEmail(env: Env, message: { subject: string; text: string; html: string }): Promise<void> {
+  if (!env.RESEND_API_KEY) {
+    throw new Error("Missing RESEND_API_KEY");
+  }
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: env.FROM_EMAIL,
+      to: [env.REMINDER_EMAIL],
+      subject: message.subject,
+      text: message.text,
+      html: message.html
+    })
   });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Resend email failed: ${response.status} ${errorText}`);
+  }
 }
 
 function stringValue(value: unknown): string {
@@ -253,11 +284,11 @@ function stringValue(value: unknown): string {
 
 function unitLabel(unit: IntervalUnit): string {
   return {
-    minute: "分钟",
-    hour: "小时",
-    day: "日",
-    month: "月",
-    year: "年"
+    minute: "minute",
+    hour: "hour",
+    day: "day",
+    month: "month",
+    year: "year"
   }[unit];
 }
 
