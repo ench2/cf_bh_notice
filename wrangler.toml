@@ -12,4 +12,4 @@ database_id = "eaf5496e-2ab3-486d-82b0-204c301546e5"
 
 [vars]
 REMINDER_EMAIL = "4100798@qq.com"
-FROM_EMAIL = "Notice Reminder <onboarding@resend.dev>"
+FROM_EMAIL = "Notice Reminder <wxq@edu.841666.xyz>"
