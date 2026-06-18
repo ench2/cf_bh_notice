@@ -85,6 +85,24 @@ async function route(request: Request, env: Env): Promise<Response> {
     }
   }
 
+  if (pathname === "/api/test-email" && request.method === "POST") {
+    try {
+      await env.EMAIL.send({
+        to: env.REMINDER_EMAIL,
+        from: env.FROM_EMAIL,
+        subject: "Notice reminder test email",
+        text: `This is a test email from notice-reminder-worker at ${new Date().toISOString()}.`
+      });
+      return json({ ok: true });
+    } catch (error) {
+      console.error(error);
+      return json({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      }, 500);
+    }
+  }
+
   const reminderRoute = pathname.match(/^\/api\/reminders\/([^/]+)(?:\/(complete))?$/);
   if (reminderRoute) {
     const id = decodeURIComponent(reminderRoute[1]);

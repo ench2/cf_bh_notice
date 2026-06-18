@@ -14,5 +14,5 @@ database_id = "eaf5496e-2ab3-486d-82b0-204c301546e5"
 name = "EMAIL"
 
 [vars]
-REMINDER_EMAIL = "reminder@edu.841666.xyz"
+REMINDER_EMAIL = "4100798@qq.com"
 FROM_EMAIL = "wxq@edu.841666.xyz"
