@@ -8,11 +8,11 @@ crons = ["* * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "notice_reminders"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "eaf5496e-2ab3-486d-82b0-204c301546e5"
 
 [[send_email]]
 name = "EMAIL"
 
 [vars]
-REMINDER_EMAIL = "admin@example.com"
-FROM_EMAIL = "reminders@example.com"
+REMINDER_EMAIL = "reminder@edu.841666.xyz"
+FROM_EMAIL = "wxq@edu.841666.xyz"
