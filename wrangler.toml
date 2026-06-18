@@ -1,0 +1,18 @@
+name = "notice-reminder-worker"
+main = "src/index.ts"
+compatibility_date = "2026-06-18"
+
+[triggers]
+crons = ["* * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "notice_reminders"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[[send_email]]
+name = "EMAIL"
+
+[vars]
+REMINDER_EMAIL = "admin@example.com"
+FROM_EMAIL = "reminders@example.com"

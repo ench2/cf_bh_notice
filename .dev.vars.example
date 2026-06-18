@@ -1,0 +1,3 @@
+ADMIN_PASSWORD=change-me
+REMINDER_EMAIL=admin@example.com
+FROM_EMAIL=reminders@example.com
