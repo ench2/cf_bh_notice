@@ -416,6 +416,8 @@ const html = `<!doctype html>
 
       const reminderForm = document.getElementById("reminder-form");
       const firstRun = document.querySelector("[name=firstRunAt]");
+      const repeatMode = document.getElementById("repeat-mode");
+      const repeatCount = document.getElementById("repeat-count");
       setupDateCalculator();
       resetReminderForm();
 
@@ -425,8 +427,6 @@ const html = `<!doctype html>
       });
       document.getElementById("refresh-button").addEventListener("click", loadReminders);
 
-      const repeatMode = document.getElementById("repeat-mode");
-      const repeatCount = document.getElementById("repeat-count");
       repeatMode.addEventListener("change", () => {
         repeatCount.disabled = repeatMode.value === "forever";
       });
