@@ -6,6 +6,7 @@ import {
   listReminders,
   processDueReminders,
   sendTestEmail,
+  updateReminder,
   validateReminderInput,
   ValidationError
 } from "./reminders";
@@ -107,6 +108,19 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (!action && request.method === "DELETE") {
       const deleted = await deleteReminder(env, id);
       return deleted ? json({ ok: true }) : json({ error: "提醒不存在" }, 404);
+    }
+
+    if (!action && request.method === "PUT") {
+      try {
+        const input = validateReminderInput(await readJson(request));
+        const reminder = await updateReminder(env, id, input);
+        return reminder ? json({ reminder }) : json({ error: "提醒不存在" }, 404);
+      } catch (error) {
+        if (error instanceof ValidationError) {
+          return json({ error: error.message }, 400);
+        }
+        throw error;
+      }
     }
 
     if (action === "complete" && request.method === "POST") {

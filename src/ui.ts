@@ -121,6 +121,11 @@ const html = `<!doctype html>
       align-items: start;
     }
 
+    .left-stack {
+      display: grid;
+      gap: 18px;
+    }
+
     .form-grid {
       display: grid;
       gap: 12px;
@@ -257,6 +262,8 @@ const html = `<!doctype html>
   <script>
     const app = document.getElementById("app");
     let refreshTimer = null;
+    let editingReminderId = null;
+    let remindersById = new Map();
 
     start();
 
@@ -273,6 +280,7 @@ const html = `<!doctype html>
 
     function renderLogin(message = "") {
       clearInterval(refreshTimer);
+      editingReminderId = null;
       app.innerHTML = \`
         <section class="login-wrap">
           <form class="panel login-panel" id="login-form">
@@ -288,6 +296,7 @@ const html = `<!doctype html>
           </form>
         </section>
       \`;
+      window.__noticeReminderForm = null;
 
       document.getElementById("login-form").addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -307,6 +316,8 @@ const html = `<!doctype html>
     }
 
     function renderDashboard() {
+      editingReminderId = null;
+      remindersById = new Map();
       app.innerHTML = \`
         <section class="shell">
           <div class="topbar">
@@ -318,8 +329,9 @@ const html = `<!doctype html>
           </div>
 
           <div class="grid">
+            <div class="left-stack">
             <form class="panel form-grid" id="reminder-form">
-              <h2 style="margin:0;font-size:18px">新增提醒</h2>
+              <h2 id="reminder-form-title" style="margin:0;font-size:18px">新增提醒</h2>
               <label>标题
                 <input name="title" maxlength="120" required>
               </label>
@@ -328,6 +340,9 @@ const html = `<!doctype html>
               </label>
               <label>首次提醒时间
                 <input name="firstRunAt" type="datetime-local" required>
+              </label>
+              <label>提前提醒天数
+                <input name="advanceNoticeDays" type="number" min="0" step="1" value="3" required>
               </label>
               <div class="inline-grid">
                 <label>间隔数值
@@ -354,9 +369,37 @@ const html = `<!doctype html>
                   <input name="repeatCount" id="repeat-count" type="number" min="1" step="1" value="1">
                 </label>
               </div>
-              <button type="submit">添加提醒</button>
+              <div class="inline-grid">
+                <label>发送开始
+                  <input name="sendWindowStart" type="time" value="00:00" required>
+                </label>
+                <label>发送结束
+                  <input name="sendWindowEnd" type="time" value="23:59" required>
+                </label>
+              </div>
+              <label>重复发信间隔（分钟）
+                <input name="minEmailIntervalMinutes" type="number" min="1" step="1" value="5" required>
+              </label>
+              <div class="actions">
+                <button type="submit" id="reminder-submit-button">添加提醒</button>
+                <button type="button" class="secondary" id="cancel-edit-button" hidden>取消编辑</button>
+              </div>
               <div class="message" id="form-message"></div>
             </form>
+
+            <section class="panel form-grid" id="date-calculator-panel">
+              <h2 style="margin:0;font-size:18px">日期计算器</h2>
+              <label>开始日期
+                <input id="calc-start-date" type="date" required>
+              </label>
+              <label>天数
+                <input id="calc-days" type="number" min="0" step="1" value="180" required>
+              </label>
+              <div class="meta" style="grid-template-columns:1fr;margin:0">
+                <div>结果日期<strong id="calc-result">-</strong></div>
+              </div>
+            </section>
+            </div>
 
             <section class="panel">
               <div class="actions" style="justify-content:space-between;margin-bottom:14px">
@@ -371,8 +414,10 @@ const html = `<!doctype html>
         </section>
       \`;
 
+      const reminderForm = document.getElementById("reminder-form");
       const firstRun = document.querySelector("[name=firstRunAt]");
-      firstRun.value = toDatetimeLocal(new Date(Date.now() + 60_000));
+      setupDateCalculator();
+      resetReminderForm();
 
       document.getElementById("logout-button").addEventListener("click", async () => {
         await api("/api/logout", { method: "POST" });
@@ -385,6 +430,9 @@ const html = `<!doctype html>
       repeatMode.addEventListener("change", () => {
         repeatCount.disabled = repeatMode.value === "forever";
       });
+      document.getElementById("cancel-edit-button").addEventListener("click", () => {
+        resetReminderForm();
+      });
 
       document.getElementById("reminder-form").addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -392,10 +440,11 @@ const html = `<!doctype html>
         const data = new FormData(form);
         const message = document.getElementById("form-message");
         message.textContent = "";
+        const isEditing = Boolean(editingReminderId);
 
         try {
-          await api("/api/reminders", {
-            method: "POST",
+          await api(isEditing ? \`/api/reminders/\${editingReminderId}\` : "/api/reminders", {
+            method: isEditing ? "PUT" : "POST",
             body: JSON.stringify({
               title: data.get("title"),
               description: data.get("description"),
@@ -403,23 +452,50 @@ const html = `<!doctype html>
               intervalValue: Number(data.get("intervalValue")),
               intervalUnit: data.get("intervalUnit"),
               repeatMode: data.get("repeatMode"),
-              repeatCount: data.get("repeatMode") === "finite" ? Number(data.get("repeatCount")) : undefined
+              repeatCount: data.get("repeatMode") === "finite" ? Number(data.get("repeatCount")) : undefined,
+              advanceNoticeDays: Number(data.get("advanceNoticeDays")),
+              sendWindowStart: data.get("sendWindowStart"),
+              sendWindowEnd: data.get("sendWindowEnd"),
+              minEmailIntervalMinutes: Number(data.get("minEmailIntervalMinutes"))
             })
           });
-          form.reset();
-          repeatCount.disabled = false;
-          repeatCount.value = "1";
-          firstRun.value = toDatetimeLocal(new Date(Date.now() + 60_000));
+          resetReminderForm();
           await loadReminders();
         } catch (error) {
           message.textContent = error.message;
         }
       });
+
+      function resetReminderForm() {
+        editingReminderId = null;
+        reminderForm.reset();
+        document.getElementById("reminder-form-title").textContent = "新增提醒";
+        document.getElementById("reminder-submit-button").textContent = "添加提醒";
+        document.getElementById("cancel-edit-button").hidden = true;
+        document.getElementById("form-message").textContent = "";
+        document.querySelector("[name=intervalValue]").value = "1";
+        document.querySelector("[name=repeatMode]").value = "finite";
+        repeatCount.disabled = false;
+        repeatCount.value = "1";
+        firstRun.value = toDatetimeLocal(new Date(Date.now() + 60_000));
+        document.querySelector("[name=advanceNoticeDays]").value = "3";
+        document.querySelector("[name=sendWindowStart]").value = "00:00";
+        document.querySelector("[name=sendWindowEnd]").value = "23:59";
+        document.querySelector("[name=minEmailIntervalMinutes]").value = "5";
+      }
+
+      window.__noticeReminderForm = {
+        reset: resetReminderForm
+      };
     }
 
     async function loadReminders() {
       try {
         const { reminders } = await api("/api/reminders", { quiet: true });
+        remindersById = new Map(reminders.map((item) => [item.id, item]));
+        if (editingReminderId && !remindersById.has(editingReminderId)) {
+          window.__noticeReminderForm?.reset?.();
+        }
         renderReminders(reminders);
       } catch (error) {
         if (error.status === 401) {
@@ -450,8 +526,12 @@ const html = `<!doctype html>
             <div>下次提醒<strong>\${formatDate(item.next_run_at)}</strong></div>
             <div>间隔周期<strong>每 \${item.interval_value} \${unitLabel(item.interval_unit)}</strong></div>
             <div>剩余次数<strong>\${item.repeat_mode === "forever" ? "永久重复" : item.repeat_remaining}</strong></div>
+            <div>提前提醒<strong>\${escapeHtml(String(item.advance_notice_days ?? 3))} 天</strong></div>
+            <div>发送时间段<strong>\${escapeHtml(formatSendWindow(item))}</strong></div>
+            <div>重复发信间隔<strong>\${escapeHtml(String(item.min_email_interval_minutes || 5))} 分钟</strong></div>
           </div>
           <div class="actions">
+            <button class="secondary" data-action="edit" data-id="\${item.id}">编辑</button>
             <button data-action="complete" data-id="\${item.id}" \${item.status !== "active" ? "disabled" : ""}>本次完成</button>
             <button class="danger" data-action="delete" data-id="\${item.id}">删除</button>
           </div>
@@ -464,6 +544,11 @@ const html = `<!doctype html>
           const id = button.dataset.id;
           button.disabled = true;
           try {
+            if (action === "edit") {
+              beginEditReminder(remindersById.get(id));
+              button.disabled = false;
+              return;
+            }
             if (action === "complete") {
               await api(\`/api/reminders/\${id}/complete\`, { method: "POST" });
             } else {
@@ -476,6 +561,31 @@ const html = `<!doctype html>
           }
         });
       });
+    }
+
+    function beginEditReminder(item) {
+      if (!item) return;
+
+      editingReminderId = item.id;
+      document.getElementById("reminder-form-title").textContent = "编辑提醒";
+      document.getElementById("reminder-submit-button").textContent = "保存修改";
+      document.getElementById("cancel-edit-button").hidden = false;
+      document.getElementById("form-message").textContent = "";
+      document.querySelector("[name=title]").value = item.title || "";
+      document.querySelector("[name=description]").value = item.description || "";
+      document.querySelector("[name=firstRunAt]").value = toDatetimeLocal(new Date(item.next_run_at));
+      document.querySelector("[name=advanceNoticeDays]").value = String(item.advance_notice_days ?? 3);
+      document.querySelector("[name=intervalValue]").value = String(item.interval_value ?? 1);
+      document.querySelector("[name=intervalUnit]").value = item.interval_unit || "day";
+      document.querySelector("[name=repeatMode]").value = item.repeat_mode || "finite";
+      document.querySelector("[name=repeatCount]").value = item.repeat_mode === "finite"
+        ? String(Math.max(Number(item.repeat_remaining ?? 1), 1))
+        : "1";
+      document.querySelector("[name=repeatCount]").disabled = item.repeat_mode === "forever";
+      document.querySelector("[name=sendWindowStart]").value = item.send_window_start || "00:00";
+      document.querySelector("[name=sendWindowEnd]").value = item.send_window_end || "23:59";
+      document.querySelector("[name=minEmailIntervalMinutes]").value = String(item.min_email_interval_minutes || 5);
+      document.getElementById("reminder-form").scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
     async function api(path, options = {}) {
@@ -501,12 +611,64 @@ const html = `<!doctype html>
       return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 16);
     }
 
+    function setupDateCalculator() {
+      const startInput = document.getElementById("calc-start-date");
+      const daysInput = document.getElementById("calc-days");
+      const result = document.getElementById("calc-result");
+
+      startInput.value = toDateInputValue(new Date());
+      const update = () => {
+        const startDate = parseLocalDate(startInput.value);
+        const days = Number(daysInput.value);
+        if (!startDate || !Number.isInteger(days) || days < 0) {
+          result.textContent = "-";
+          return;
+        }
+
+        startDate.setDate(startDate.getDate() + days);
+        result.textContent = formatLocalDate(startDate);
+      };
+
+      startInput.addEventListener("input", update);
+      daysInput.addEventListener("input", update);
+      update();
+    }
+
+    function toDateInputValue(date) {
+      return formatLocalDate(date);
+    }
+
+    function parseLocalDate(value) {
+      const match = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(value);
+      if (!match) return null;
+
+      const year = Number(match[1]);
+      const month = Number(match[2]);
+      const day = Number(match[3]);
+      const date = new Date(year, month - 1, day);
+      if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+        return null;
+      }
+      return date;
+    }
+
+    function formatLocalDate(date) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return \`\${year}-\${month}-\${day}\`;
+    }
+
     function formatDate(value) {
       return new Date(value).toLocaleString("zh-CN", { hour12: false });
     }
 
     function statusLabel(status) {
       return status === "active" ? "进行中" : status === "completed" ? "已完成" : "已删除";
+    }
+
+    function formatSendWindow(item) {
+      return \`\${item.send_window_start || "00:00"} - \${item.send_window_end || "23:59"}\`;
     }
 
     function unitLabel(unit) {

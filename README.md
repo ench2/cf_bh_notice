@@ -8,6 +8,7 @@ Cloudflare Workers + D1 + Cron Trigger + Resend API 的提醒系统。
 - 支持分钟、小时、日、月、年周期。
 - 支持固定重复次数或永久重复。
 - 每分钟 Cron 扫描到期提醒，并通过 Resend HTTP API 发送邮件。
+- 每条提醒可单独设置允许发送时间段和重复发信间隔。
 - 点击“本次完成”后按完成时间自动计算下一次提醒。
 
 ## 本地开发
@@ -81,4 +82,5 @@ npm run deploy
 - Workers Cron Trigger 最小扫描间隔是 1 分钟，所以不提供秒级提醒。
 - 邮件发送走 Resend API，不需要 Cloudflare Workers Paid 的 Email Sending。
 - Resend 免费测试阶段可以先用 `onboarding@resend.dev` 作为发件地址；如果要用自己的域名邮箱发件，需要在 Resend 里验证域名。
+- 新建提醒时可以单独设置发送时间段和重复发信间隔；已有提醒会默认使用 `00:00-23:59` 和 `5` 分钟间隔。
 - 同一条提醒同一次到期只会发送一次邮件，直到管理员点击“本次完成”推进下一次时间。

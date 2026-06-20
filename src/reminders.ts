@@ -3,11 +3,12 @@ import type { Env, IntervalUnit, ReminderInput, ReminderRow, RepeatMode } from "
 
 const INTERVAL_UNITS = new Set<IntervalUnit>(["minute", "hour", "day", "month", "year"]);
 const REPEAT_MODES = new Set<RepeatMode>(["finite", "forever"]);
-const REMINDER_LOOKAHEAD_MS = 3 * 24 * 60 * 60 * 1000;
-const MIN_EMAIL_INTERVAL_MS = 60 * 60 * 1000;
-const SEND_TIME_ZONE = "Asia/Shanghai";
-const SEND_WINDOW_START_MINUTE = 8 * 60;
-const SEND_WINDOW_END_MINUTE = 22 * 60;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_ADVANCE_NOTICE_DAYS = 3;
+const DEFAULT_SEND_TIME_ZONE = "Asia/Shanghai";
+const DEFAULT_SEND_WINDOW_START = "00:00";
+const DEFAULT_SEND_WINDOW_END = "23:59";
+const DEFAULT_MIN_EMAIL_INTERVAL_MINUTES = 5;
 
 export function validateReminderInput(input: unknown): ReminderInput {
   if (!input || typeof input !== "object") {
@@ -24,6 +25,14 @@ export function validateReminderInput(input: unknown): ReminderInput {
     ? undefined
     : Number(value.repeatCount);
   const firstRunAt = stringValue(value.firstRunAt);
+  const advanceNoticeDays = value.advanceNoticeDays === undefined || value.advanceNoticeDays === null || value.advanceNoticeDays === ""
+    ? DEFAULT_ADVANCE_NOTICE_DAYS
+    : Number(value.advanceNoticeDays);
+  const sendWindowStart = normalizeTimeOfDay(stringValue(value.sendWindowStart), DEFAULT_SEND_WINDOW_START);
+  const sendWindowEnd = normalizeTimeOfDay(stringValue(value.sendWindowEnd), DEFAULT_SEND_WINDOW_END);
+  const minEmailIntervalMinutes = value.minEmailIntervalMinutes === undefined || value.minEmailIntervalMinutes === null || value.minEmailIntervalMinutes === ""
+    ? DEFAULT_MIN_EMAIL_INTERVAL_MINUTES
+    : Number(value.minEmailIntervalMinutes);
 
   if (!title) throw new ValidationError("Title is required");
   if (!Number.isInteger(intervalValue) || intervalValue <= 0) {
@@ -42,6 +51,15 @@ export function validateReminderInput(input: unknown): ReminderInput {
   if (Number.isNaN(new Date(firstRunAt).getTime())) {
     throw new ValidationError("Invalid first run time");
   }
+  if (!Number.isInteger(advanceNoticeDays) || advanceNoticeDays < 0) {
+    throw new ValidationError("Advance notice days must be a non-negative integer");
+  }
+  if (!sendWindowStart || !sendWindowEnd) {
+    throw new ValidationError("Invalid send window time");
+  }
+  if (!Number.isInteger(minEmailIntervalMinutes) || minEmailIntervalMinutes <= 0) {
+    throw new ValidationError("Minimum email interval must be a positive integer");
+  }
 
   return {
     title,
@@ -50,7 +68,11 @@ export function validateReminderInput(input: unknown): ReminderInput {
     intervalUnit: intervalUnit as IntervalUnit,
     repeatMode: repeatMode as RepeatMode,
     repeatCount: finiteRepeatCount,
-    firstRunAt: new Date(firstRunAt).toISOString()
+    firstRunAt: new Date(firstRunAt).toISOString(),
+    advanceNoticeDays,
+    sendWindowStart,
+    sendWindowEnd,
+    minEmailIntervalMinutes
   };
 }
 
@@ -81,6 +103,10 @@ export async function createReminder(env: Env, input: ReminderInput, now = new D
     repeat_mode: input.repeatMode,
     repeat_remaining: input.repeatMode === "finite" ? input.repeatCount ?? null : null,
     next_run_at: input.firstRunAt,
+    advance_notice_days: input.advanceNoticeDays,
+    send_window_start: input.sendWindowStart,
+    send_window_end: input.sendWindowEnd,
+    min_email_interval_minutes: input.minEmailIntervalMinutes,
     last_sent_at: null,
     last_sent_for: null,
     last_completed_at: null,
@@ -92,9 +118,10 @@ export async function createReminder(env: Env, input: ReminderInput, now = new D
   await env.DB.prepare(`
     INSERT INTO reminders (
       id, title, description, interval_value, interval_unit, repeat_mode, repeat_remaining,
-      next_run_at, last_sent_at, last_sent_for, last_completed_at, status, created_at, updated_at
+      next_run_at, advance_notice_days, send_window_start, send_window_end, min_email_interval_minutes,
+      last_sent_at, last_sent_for, last_completed_at, status, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     reminder.id,
     reminder.title,
@@ -104,6 +131,10 @@ export async function createReminder(env: Env, input: ReminderInput, now = new D
     reminder.repeat_mode,
     reminder.repeat_remaining,
     reminder.next_run_at,
+    reminder.advance_notice_days,
+    reminder.send_window_start,
+    reminder.send_window_end,
+    reminder.min_email_interval_minutes,
     reminder.last_sent_at,
     reminder.last_sent_for,
     reminder.last_completed_at,
@@ -113,6 +144,55 @@ export async function createReminder(env: Env, input: ReminderInput, now = new D
   ).run();
 
   return reminder;
+}
+
+export async function updateReminder(
+  env: Env,
+  id: string,
+  input: ReminderInput,
+  now = new Date()
+): Promise<ReminderRow | null> {
+  const existing = await getReminder(env, id);
+  if (!existing || existing.status === "deleted") return null;
+
+  const nowIso = now.toISOString();
+  const result = await env.DB.prepare(`
+    UPDATE reminders
+    SET title = ?,
+        description = ?,
+        interval_value = ?,
+        interval_unit = ?,
+        repeat_mode = ?,
+        repeat_remaining = ?,
+        next_run_at = ?,
+        advance_notice_days = ?,
+        send_window_start = ?,
+        send_window_end = ?,
+        min_email_interval_minutes = ?,
+        last_sent_at = NULL,
+        last_sent_for = NULL,
+        last_completed_at = NULL,
+        status = 'active',
+        updated_at = ?
+    WHERE id = ? AND status != 'deleted'
+  `).bind(
+    input.title,
+    input.description ?? "",
+    input.intervalValue,
+    input.intervalUnit,
+    input.repeatMode,
+    input.repeatMode === "finite" ? input.repeatCount ?? null : null,
+    input.firstRunAt,
+    input.advanceNoticeDays,
+    input.sendWindowStart,
+    input.sendWindowEnd,
+    input.minEmailIntervalMinutes,
+    nowIso,
+    id
+  ).run();
+
+  if ((result.meta.changes ?? 0) === 0) return null;
+  return getReminder(env, id);
 }
 
 export async function deleteReminder(env: Env, id: string, now = new Date()): Promise<boolean> {
@@ -161,28 +241,25 @@ export async function completeReminder(env: Env, id: string, now = new Date()): 
 }
 
 export async function processDueReminders(env: Env, now = new Date()): Promise<number> {
-  if (!isWithinSendWindow(now)) {
-    return 0;
-  }
-
   const nowIso = now.toISOString();
-  const lookaheadIso = new Date(now.getTime() + REMINDER_LOOKAHEAD_MS).toISOString();
-  const lastAllowedSentAtIso = new Date(now.getTime() - MIN_EMAIL_INTERVAL_MS).toISOString();
 
   const result = await env.DB.prepare(`
     SELECT *
     FROM reminders
     WHERE status = 'active'
-      AND next_run_at <= ?
-      AND (last_sent_at IS NULL OR last_sent_at <= ?)
+      AND julianday(next_run_at) <= julianday(?) + advance_notice_days
     ORDER BY next_run_at ASC
-    LIMIT 50
-  `).bind(lookaheadIso, lastAllowedSentAtIso).all<ReminderRow>();
+    LIMIT 100
+  `).bind(nowIso).all<ReminderRow>();
 
   const reminders = result.results ?? [];
   let sentCount = 0;
 
   for (const reminder of reminders) {
+    if (!shouldSendReminder(reminder, now)) {
+      continue;
+    }
+
     await sendReminderEmail(env, reminder);
     await env.DB.prepare(`
       UPDATE reminders
@@ -204,9 +281,61 @@ export async function sendTestEmail(env: Env): Promise<void> {
   });
 }
 
-function isWithinSendWindow(value: Date): boolean {
-  const localMinute = getLocalMinuteOfDay(value, SEND_TIME_ZONE);
-  return localMinute >= SEND_WINDOW_START_MINUTE && localMinute <= SEND_WINDOW_END_MINUTE;
+type ReminderSendPolicy = {
+  windowStartMinute: number;
+  windowEndMinute: number;
+  minEmailIntervalMinutes: number;
+};
+
+function shouldSendReminder(reminder: ReminderRow, now: Date): boolean {
+  const policy = getReminderSendPolicy(reminder);
+  if (!isWithinAdvanceNoticeWindow(reminder, now)) {
+    return false;
+  }
+  if (!isWithinSendWindow(now, policy)) {
+    return false;
+  }
+
+  if (!reminder.last_sent_at) {
+    return true;
+  }
+
+  const lastSentAt = new Date(reminder.last_sent_at).getTime();
+  if (Number.isNaN(lastSentAt)) {
+    return true;
+  }
+
+  return lastSentAt <= now.getTime() - policy.minEmailIntervalMinutes * 60_000;
+}
+
+function isWithinAdvanceNoticeWindow(reminder: ReminderRow, now: Date): boolean {
+  const nextRunAt = new Date(reminder.next_run_at).getTime();
+  if (Number.isNaN(nextRunAt)) {
+    return false;
+  }
+
+  const advanceNoticeDays = parseNonNegativeInteger(reminder.advance_notice_days, DEFAULT_ADVANCE_NOTICE_DAYS);
+  return nextRunAt <= now.getTime() + advanceNoticeDays * DAY_MS;
+}
+
+function getReminderSendPolicy(reminder: ReminderRow): ReminderSendPolicy {
+  const windowStartMinute = parseTimeOfDay(reminder.send_window_start, DEFAULT_SEND_WINDOW_START);
+  const windowEndMinute = parseTimeOfDay(reminder.send_window_end, DEFAULT_SEND_WINDOW_END);
+  const minEmailIntervalMinutes = parsePositiveInteger(reminder.min_email_interval_minutes, DEFAULT_MIN_EMAIL_INTERVAL_MINUTES);
+
+  return {
+    windowStartMinute,
+    windowEndMinute,
+    minEmailIntervalMinutes
+  };
+}
+
+function isWithinSendWindow(value: Date, policy: ReminderSendPolicy): boolean {
+  const localMinute = getLocalMinuteOfDay(value, DEFAULT_SEND_TIME_ZONE);
+  if (policy.windowStartMinute <= policy.windowEndMinute) {
+    return localMinute >= policy.windowStartMinute && localMinute <= policy.windowEndMinute;
+  }
+  return localMinute >= policy.windowStartMinute || localMinute <= policy.windowEndMinute;
 }
 
 function getLocalMinuteOfDay(value: Date, timeZone: string): number {
@@ -219,6 +348,42 @@ function getLocalMinuteOfDay(value: Date, timeZone: string): number {
   const hour = Number(parts.find((part) => part.type === "hour")?.value);
   const minute = Number(parts.find((part) => part.type === "minute")?.value);
   return hour * 60 + minute;
+}
+
+function normalizeTimeOfDay(value: string, fallback: string): string {
+  const target = value || fallback;
+  const match = /^(\d{1,2}):(\d{2})$/.exec(target);
+  if (!match) return "";
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return "";
+  }
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function parseTimeOfDay(value: string | undefined, fallback: string): number {
+  const target = value || fallback;
+  const match = /^(\d{1,2}):(\d{2})$/.exec(target);
+  if (!match) return parseTimeOfDay(fallback, "08:00");
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return parseTimeOfDay(fallback, "08:00");
+  }
+  return hour * 60 + minute;
+}
+
+function parsePositiveInteger(value: string | number | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseNonNegativeInteger(value: string | number | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 async function getReminder(env: Env, id: string): Promise<ReminderRow | null> {

@@ -11,6 +11,10 @@ export type ReminderRow = {
   repeat_mode: RepeatMode;
   repeat_remaining: number | null;
   next_run_at: string;
+  advance_notice_days: number;
+  send_window_start: string;
+  send_window_end: string;
+  min_email_interval_minutes: number;
   last_sent_at: string | null;
   last_sent_for: string | null;
   last_completed_at: string | null;
@@ -27,6 +31,10 @@ export type ReminderInput = {
   repeatMode: RepeatMode;
   repeatCount?: number;
   firstRunAt: string;
+  advanceNoticeDays: number;
+  sendWindowStart: string;
+  sendWindowEnd: string;
+  minEmailIntervalMinutes: number;
 };
 
 export type Env = {

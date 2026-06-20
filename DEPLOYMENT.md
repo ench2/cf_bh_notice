@@ -2,6 +2,8 @@
 
 这个项目是 Cloudflare Workers 应用，使用 D1 数据库、Cron Trigger 和 Resend 邮件 API。推荐使用本仓库自带的 GitHub Actions：代码推送到 GitHub 的 `main` 分支后，自动完成类型检查、测试、D1 远程迁移和 Worker 部署。
 
+每条提醒都可以单独设置允许发送时间段和重复发信间隔；这些配置保存在 D1 数据库里，不需要改 Worker 环境变量。
+
 ## 一、部署前准备
 
 需要准备：
